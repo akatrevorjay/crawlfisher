@@ -39,8 +39,11 @@ checked_googls = set()
 checked_images = set()
 
 
-def modified(date_modified, allowed_margin):
+def modified(date_modified, allowed_margin=2):
     """
+    This function was gracefully taken (and modified ever so slightly) from
+    Ryan Drapeau, notice his excellent commenting skills. ~trevorj
+
     Returns True if and only if the date is within the allowed
     margin of days of the current date.
 
@@ -61,7 +64,7 @@ def modified(date_modified, allowed_margin):
     return today - margin <= modified_date <= today + margin
 
 
-class Crawler(gevent.Greenlet):
+class crawlfisher(gevent.Greenlet):
     recursive = True
     download_images = False
 
@@ -82,11 +85,12 @@ class Crawler(gevent.Greenlet):
                     url, self._base_domain_regex = q
                 else:
                     url = q
-                    self._base_domain_regex = Crawler._base_domain_regex
+                    self._base_domain_regex = crawlfisher._base_domain_regex
+
+                self.crawl(url)
             except StopIteration:
                 log.info('Got StopIteration')
                 break
-            self.crawl(url)
 
     def test_googl(self, url):
         """ Tests goo.gl url to see if it's an invite """
@@ -98,7 +102,6 @@ class Crawler(gevent.Greenlet):
         if not url.startswith('http://'):
             url = 'http://%s' % url
 
-        global checked_googls
         if url in checked_googls:
             #log.debug('Skipping GOOGL: "%s"', url)
             return
@@ -179,7 +182,6 @@ class Crawler(gevent.Greenlet):
                 yield src
 
     def fix_youtube_url(self, url):
-        #m = re.search(r'(?:https?://(?:www\.)?youtube.com/)?/?(?:watch\?)?(?:v=)?([-_A-z0-9]+)', url)
         m = re.search(r'^(?:https?://(?:www\.)?youtube.com/)?/?(?:watch\?)?(?:v=)?([-_A-z0-9]+)$', url)
         if m:
             url = m.groups()[0]
@@ -190,7 +192,6 @@ class Crawler(gevent.Greenlet):
         if not video_id:
             return
 
-        global checked_youtube_annotation_ids
         if video_id in checked_youtube_annotation_ids:
             return
 
@@ -236,70 +237,63 @@ class Crawler(gevent.Greenlet):
         if self.recursive:
             try:
                 urls = set(self.find_urls_in_html(html))
+
+                for child in urls:
+                    self._q.put((child, self._base_domain_regex))
             except UnicodeEncodeError as e:
                 log.error('Exception while finding URLs in "%d": %s', url, e)
-
-            for child in urls:
-                self._q.put(child)
 
         if self.download_images:
             last_modified = r.headers.get('last-modified')
             if not last_modified \
-               or modified(last_modified, 2):
+               or modified(last_modified):
                 try:
                     images = set(self.find_images_in_html(html))
+                    for child in images:
+                        for image in images:
+                            self.check_image(image)
                 except UnicodeEncodeError as e:
                     log.error('Exception while finding URLs in "%d": %s',
                               url, e)
-
-                for child in images:
-                    for image in images:
-                        self.check_image(image)
 
     def check_image(self, url):
         try:
             if url in checked_images:
                 #log.error('Skipping image: "%s"', url)
                 return
+
             fn = 'img/%s' % url.split('/')[-1]
             if not os.path.isfile(fn):
-                #r = urllib2.urlopen(url)
                 r = requests.get(url, verify=False, stream=True)
-                if r.status_code == 200:
-                    last_modified = r.headers.get('last-modified')
-                    if not last_modified \
-                       or modified(last_modified, 2):
-                        with open(fn, 'wb') as f:
-                            for chunk in r.iter_content(1024):
-                                f.write(chunk)
+                if not r.status_code == 200:
+                    log.error('Got bad status code while downloading image:'
+                              ' [%s] "%s"',
+                              r.status_code, url)
+                    return
+
+                last_modified = r.headers.get('last-modified')
+                if not last_modified \
+                    or modified(last_modified):
+                    with open(fn, 'wb') as f:
+                        for chunk in r.iter_content(1024):
+                            f.write(chunk)
         except Exception as e:
             log.error('Cannot download image "%s": %s', url, e)
 
 
-def crawl_one(url):
-    c = Crawler(q, conn)
-    c.start()
-
-    q.put((url, ''))
-
-    #gevent.wait()
+crawlfishers = []
 
 
-crawlers = []
-
-
-def crawl_pool(num):
-    global crawlers
+def spin_crawl_pool(num):
     for _ in range(num):
-        c = Crawler(q, conn)
+        c = crawlfisher(q, conn)
         c.start()
-        crawlers.append(c)
+        crawlfishers.append(c)
 
 
 def put(args):
-    global crawlers
-    if not crawlers:
-        crawl_pool(20)
+    if not crawlfishers:
+        spin_crawl_pool(20)
     q.put(args)
     gevent.sleep(10000000000)
 
