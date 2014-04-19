@@ -241,7 +241,7 @@ class crawlfisher(gevent.Greenlet):
                 for child in urls:
                     self._q.put((child, self._base_domain_regex))
             except UnicodeEncodeError as e:
-                log.error('Exception while finding URLs in "%d": %s', url, e)
+                log.error('Exception while finding URLs in "%s": %s', url, e)
 
         if self.download_images:
             last_modified = r.headers.get('last-modified')
@@ -253,7 +253,7 @@ class crawlfisher(gevent.Greenlet):
                         for image in images:
                             self.check_image(image)
                 except UnicodeEncodeError as e:
-                    log.error('Exception while finding URLs in "%d": %s',
+                    log.error('Exception while finding images in "%s": %s',
                               url, e)
 
     def check_image(self, url):
@@ -273,7 +273,7 @@ class crawlfisher(gevent.Greenlet):
 
                 last_modified = r.headers.get('last-modified')
                 if not last_modified \
-                    or modified(last_modified):
+                   or modified(last_modified):
                     with open(fn, 'wb') as f:
                         for chunk in r.iter_content(1024):
                             f.write(chunk)
